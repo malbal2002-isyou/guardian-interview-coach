@@ -560,7 +560,7 @@ function STT(onText,onState){
     for(var i=0;i<e.results.length;i++){var t=e.results[i][0].transcript;if(e.results[i].isFinal)fin.push(t);else it+=t;}
     me.cur=joinFinals(fin);me.onText(me.text(),it.trim());
   };
-  r.onerror=function(e){var c=e&&e.error;if(STT_FATAL[c]){me.on=false;me.onState('blocked',c);}else if(c==='network')me.onState('network');};
+  r.onerror=function(e){var c=e&&e.error;if(STT_FATAL[c]){me.on=false;me.onState('blocked',c);}else if(c==='network')me.onState('network');else if(c&&c!=='no-speech'&&c!=='aborted')me.onState('micfail','받아쓰기 오류가 났어요 ('+c+'). 잠시 뒤 다시 눌러 주세요');};
   r.onend=function(){me.commit();if(me.on)me.restart();else me.onState('off');};
 }
 STT.prototype.text=function(){return (this.done+(this.done&&this.cur?' ':'')+this.cur).trim();};
@@ -568,7 +568,7 @@ STT.prototype.commit=function(){if(this.cur){this.done=this.text();this.cur='';}
 STT.prototype.restart=function(){
   var me=this,t=Date.now();
   me.starts=me.starts.filter(function(x){return t-x<10000;});
-  if(me.starts.length>=6){me.on=false;me.onState('unstable');return;}
+  if(me.starts.length>=(me.loose?15:6)){me.on=false;me.onState('unstable');return;}
   setTimeout(function(){if(!me.on)return;try{me.starts.push(Date.now());me.r.start();me.onState('listening');}catch(e){}},250);
 };
 STT.prototype.start=function(base){if(!this.ok||this.on)return;this.done=String(base||'').trim();this.cur='';this.on=true;this.starts=[Date.now()];try{this.r.start();this.onState('listening');}catch(e){}};
@@ -595,6 +595,11 @@ function capStart(opt){
   if(CAP.on)return Promise.resolve();
   CAP.on=true;
   if(opt.manual)return Promise.resolve(); /* 키보드 마이크 · 직접 입력: 시간만 잰다 */
+  if(opt.sttOnly){ /* 휴대폰 · 패드: 마이크를 따로 잡아 두면 받아쓰기가 소리를 못 받는다 → 받아쓰기만 켠다 */
+    micRelease(); if(opt.meterEl){opt.meterEl.style.width='0%';}
+    if(!sttOK()){opt.onState&&opt.onState('nostt');return Promise.resolve();}
+    CAP.stt=new STT(function(full,it){ if(opt.meterEl)opt.meterEl.style.width=(it?70:25)+'%'; opt.onText(full,it); },opt.onState); CAP.stt.loose=true; CAP.stt.start(opt.base); return Promise.resolve();
+  }
   var p=micStream().then(function(){
     if(opt.record&&window.MediaRecorder){CAP.rec=new Recorder();return CAP.rec.start().catch(function(){CAP.rec=null;});}
   }).then(function(){meterStart(opt.meterEl);},function(e){ /* 마이크 스트림을 못 잡아도 받아쓰기는 시도 */ opt.onState&&opt.onState('micfail',micErrText(e));});
@@ -738,6 +743,7 @@ var RUB20=[['질문에 맞는 답 (두괄식)',['질문과 다른 내용','끝�
 
   var IOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1), MOB=!!window.GD_MOBILE;
   /* 휴대폰 · 패드: 자동 받아쓰기가 되는 환경인지 진단 */
+  var TOUCH=MOB||/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)||IOS;
   function envCheck(){
     var ua=navigator.userAgent, inapp=/KAKAOTALK|NAVER\(inapp|FBAN|FBAV|Instagram|Line\/|DaumApps|everytimeApp|BAND\//i.test(ua), web=/^https:$/.test(location.protocol)||/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
     if(inapp)return {ok:false,why:'inapp',web:web};
@@ -871,7 +877,7 @@ var RUB20=[['질문에 맞는 답 (두괄식)',['질문과 다른 내용','끝�
     $('pState').textContent='🎧 듣고 있어요. 또박또박, 문장 끝까지 말해 주세요.'; $('pAudio').innerHTML='';
     var t0=Date.now(), base=q.sec||0; clearInterval(UI.tm); UI.tm=setInterval(function(){q.sec=base+Math.round((Date.now()-t0)/1000);clock();},500);
     if(isKbd()){ capStart({manual:true}); $('pState').innerHTML='<span class="info" style="display:inline-block">'+KBD_MSG+'</span>'; var ta0=$('pScript'); if(ta0){try{ta0.focus();}catch(e){} ta0.scrollIntoView({block:'center'});} return; }
-    capStart({record:true,base:q.script,meterEl:$('pMeter'),
+    capStart({record:!TOUCH,sttOnly:TOUCH,base:q.script,meterEl:$('pMeter'),
       onText:function(full,it){ if(UI.q!==q)return; q.script=full; var ta=$('pScript'); if(ta){ta.value=full;ta.scrollTop=ta.scrollHeight;} var i=$('pInterim'); if(i)i.textContent=it?'… '+it:''; },
       onState:function(s,m){ var el=$('pState'); if(!el)return;
         if(s==='blocked')el.innerHTML='<span class="note">🚫 마이크가 막혀 있어요. 주소창 왼쪽 아이콘에서 마이크를 「허용」으로 바꾸고 새로고침해 주세요. 그동안은 아래 칸에 직접 적어도 돼요.</span>';
