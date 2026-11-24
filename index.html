@@ -558,10 +558,12 @@ function STT(onText,onState){
   r.onresult=function(e){
     var fin=[],it='';
     for(var i=0;i<e.results.length;i++){var t=e.results[i][0].transcript;if(e.results[i].isFinal)fin.push(t);else it+=t;}
-    me.cur=joinFinals(fin);me.onText(me.text(),it.trim());
+    me.cur=joinFinals(fin);if(me.log[me.log.length-1]!=='글자받음')dg('글자받음');me.onText(me.text(),it.trim());
   };
-  r.onerror=function(e){var c=e&&e.error;if(STT_FATAL[c]){me.on=false;me.onState('blocked',c);}else if(c==='network')me.onState('network');else if(c&&c!=='no-speech'&&c!=='aborted')me.onState('micfail','받아쓰기 오류가 났어요 ('+c+'). 잠시 뒤 다시 눌러 주세요');};
-  r.onend=function(){me.commit();if(me.on)me.restart();else me.onState('off');};
+  me.log=[];me.onDiag=null;function dg(x){me.log.push(x);if(me.log.length>14)me.log.shift();if(me.onDiag)me.onDiag(me.log.join(' → '),x);}
+  me.dg=dg;r.onstart=function(){dg('시작됨');};r.onaudiostart=function(){dg('마이크열림');};r.onsoundstart=function(){dg('소리감지');};r.onspeechstart=function(){dg('말소리감지');};r.onnomatch=function(){dg('인식못함');};
+  r.onerror=function(e){var c=e&&e.error;dg('오류:'+c);if(STT_FATAL[c]){me.on=false;me.onState('blocked',c);}else if(c==='network')me.onState('network');else if(c&&c!=='no-speech'&&c!=='aborted')me.onState('micfail','받아쓰기 오류가 났어요 ('+c+'). 잠시 뒤 다시 눌러 주세요');};
+  r.onend=function(){dg('끝');me.commit();if(me.on)me.restart();else me.onState('off');};
 }
 STT.prototype.text=function(){return (this.done+(this.done&&this.cur?' ':'')+this.cur).trim();};
 STT.prototype.commit=function(){if(this.cur){this.done=this.text();this.cur='';}};
@@ -569,9 +571,9 @@ STT.prototype.restart=function(){
   var me=this,t=Date.now();
   me.starts=me.starts.filter(function(x){return t-x<10000;});
   if(me.starts.length>=(me.loose?15:6)){me.on=false;me.onState('unstable');return;}
-  setTimeout(function(){if(!me.on)return;try{me.starts.push(Date.now());me.r.start();me.onState('listening');}catch(e){}},250);
+  setTimeout(function(){if(!me.on)return;try{me.starts.push(Date.now());me.r.start();me.onState('listening');}catch(e){me.dg('다시켜기실패:'+(e&&e.name));}},me.loose?80:250);
 };
-STT.prototype.start=function(base){if(!this.ok||this.on)return;this.done=String(base||'').trim();this.cur='';this.on=true;this.starts=[Date.now()];try{this.r.start();this.onState('listening');}catch(e){}};
+STT.prototype.start=function(base){if(!this.ok||this.on)return;this.done=String(base||'').trim();this.cur='';this.on=true;this.starts=[Date.now()];this.dg('켜기요청');try{this.r.start();this.onState('listening');}catch(e){this.dg('켜기실패:'+(e&&e.name)+' '+(e&&e.message||''));this.on=false;this.onState('micfail','받아쓰기를 켜지 못했어요 ('+(e&&e.name)+')');}};
 STT.prototype.stop=function(){
   var me=this;if(!me.ok)return Promise.resolve();
   me.on=false;
@@ -598,7 +600,7 @@ function capStart(opt){
   if(opt.sttOnly){ /* 휴대폰 · 패드: 마이크를 따로 잡아 두면 받아쓰기가 소리를 못 받는다 → 받아쓰기만 켠다 */
     micRelease(); if(opt.meterEl){opt.meterEl.style.width='0%';}
     if(!sttOK()){opt.onState&&opt.onState('nostt');return Promise.resolve();}
-    CAP.stt=new STT(function(full,it){ if(opt.meterEl)opt.meterEl.style.width=(it?70:25)+'%'; opt.onText(full,it); },opt.onState); CAP.stt.loose=true; CAP.stt.start(opt.base); return Promise.resolve();
+    CAP.stt=new STT(function(full,it){ if(opt.meterEl)opt.meterEl.style.width=(it?70:25)+'%'; opt.onText(full,it); },opt.onState); CAP.stt.loose=true; CAP.stt.r.continuous=false; CAP.stt.onDiag=function(line,last){ if(opt.onDiag)opt.onDiag(line); if(opt.meterEl&&(last==='소리감지'||last==='말소리감지'||last==='마이크열림'))opt.meterEl.style.width=(last==='마이크열림'?12:55)+'%'; }; CAP.stt.start(opt.base); return Promise.resolve();
   }
   var p=micStream().then(function(){
     if(opt.record&&window.MediaRecorder){CAP.rec=new Recorder();return CAP.rec.start().catch(function(){CAP.rec=null;});}
@@ -841,7 +843,7 @@ var RUB20=[['질문에 맞는 답 (두괄식)',['질문과 다른 내용','끝�
       (myAns(q.q)?'<details><summary>📝 내가 써 둔 답안 보기 (먼저 한 번 말해 본 뒤에 열어 보세요)</summary><div class="tpl pre">'+esc(myAns(q.q))+'</div></details>':'')+
       (dz?'<details open><summary>🧱 내가 만든 답변 설계 (키워드만 보고 말하기)</summary><div class="tpl pre">'+esc(designText(dz))+'</div></details>':'')+
       '<div class="recbar mt12"><button class="btn pri big" id="pRec">🎙️ 마이크 ON</button><div class="clock" id="pClock">00:00</div><div class="meter"><i id="pMeter"></i></div></div>'+
-      '<div class="small mut mt8" id="pState">버튼을 누르면 받아쓰기가 시작돼요. 목표는 '+(q.meta.jesi?'1분 30초~3분':'1분~1분 30초')+'.</div><div class="interim" id="pInterim"></div><div id="pAudio"></div>'+
+      '<div class="small mut mt8" id="pState">버튼을 누르면 받아쓰기가 시작돼요. 목표는 '+(q.meta.jesi?'1분 30초~3분':'1분~1분 30초')+'.</div><div class="interim" id="pInterim"></div><div class="small mut" id="pDiag" style="word-break:keep-all"></div><div id="pAudio"></div>'+
       '<label class="fl">내가 한 말 <span class="mut" style="font-weight:400">— 받아쓰기가 틀린 곳은 고쳐도 돼요. 직접 적어도 됩니다</span></label>'+
       '<textarea id="pScript" placeholder="마이크를 켜고 말하면 여기에 글로 적혀요."></textarea><div class="stat" id="pStat"></div><div id="pBlind"></div>'+
       '<div class="row mt12"><button class="btn navy big" id="pGPT">🧑‍🏫 갓코치 피드백 받기 (ChatGPT 열기)</button><button class="btn" id="pKeep">💾 이 답변 저장</button><button class="btn" id="pDesign">🧱 답변 설계하기</button><button class="btn" id="pToAns">📝 내 답안으로 저장</button></div>'+
@@ -878,6 +880,7 @@ var RUB20=[['질문에 맞는 답 (두괄식)',['질문과 다른 내용','끝�
     var t0=Date.now(), base=q.sec||0; clearInterval(UI.tm); UI.tm=setInterval(function(){q.sec=base+Math.round((Date.now()-t0)/1000);clock();},500);
     if(isKbd()){ capStart({manual:true}); $('pState').innerHTML='<span class="info" style="display:inline-block">'+KBD_MSG+'</span>'; var ta0=$('pScript'); if(ta0){try{ta0.focus();}catch(e){} ta0.scrollIntoView({block:'center'});} return; }
     capStart({record:!TOUCH,sttOnly:TOUCH,base:q.script,meterEl:$('pMeter'),
+      onDiag:function(line){ var d=$('pDiag'); if(d)d.textContent='받아쓰기 진단: '+line; },
       onText:function(full,it){ if(UI.q!==q)return; q.script=full; var ta=$('pScript'); if(ta){ta.value=full;ta.scrollTop=ta.scrollHeight;} var i=$('pInterim'); if(i)i.textContent=it?'… '+it:''; },
       onState:function(s,m){ var el=$('pState'); if(!el)return;
         if(s==='blocked')el.innerHTML='<span class="note">🚫 마이크가 막혀 있어요. 주소창 왼쪽 아이콘에서 마이크를 「허용」으로 바꾸고 새로고침해 주세요. 그동안은 아래 칸에 직접 적어도 돼요.</span>';
